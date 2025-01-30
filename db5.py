@@ -6,18 +6,18 @@ from datetime import datetime, timezone
 import requests  # For making HTTP requests to the web search API
 
 # MongoDB Connection
-client = MongoClient("mongodb+srv://hbharambe71:Hemant87677@cluster0.m5zvr.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
+client = MongoClient("mongodb+srv://<username>:<password>@cluster0.m5zvr.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0") #replace the username and password
 db = client["telegram_bot"]
 users = db["users"]
 chat_history = db["chat_history"]
 file_metadata = db["file_metadata"]  # New collection for file metadata
 
 # Gemini API Key Configuration
-GEN_API_KEY = "AIzaSyDfHHLZdrXa4ZO_1MGIqnGOm8QJusHnzjc"  # Replace with your Gemini API key
+GEN_API_KEY = "xxxxxxxxxxx"  # Replace with your Gemini API key
 genai.configure(api_key=GEN_API_KEY)
 
 # Web Search API Configuration
-WEB_SEARCH_API_KEY = "24656b90917097c1409345ab1cbeca5c390f891b44bf1987c5efa2dcaedd79d7"  # Replace with your web search API key
+WEB_SEARCH_API_KEY = "xxxxxxxxx"  # Replace with your web search API key
 WEB_SEARCH_API_URL = "https://serpapi.com/search"  # Example: SerpAPI endpoint
 
 # Start Command
@@ -175,7 +175,7 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Main Function to Run the Bot
 if __name__ == "__main__":
-    bot_token = "7971814599:AAFIuuOB_S7gQD8qcffSC9eH_ISLfpooIyc"  # Replace with your Telegram Bot token
+    bot_token = "xxxxxxxxxxxxxxxxxx"  # Replace with your Telegram Bot token
     app = ApplicationBuilder().token(bot_token).build()
 
     # Handlers
