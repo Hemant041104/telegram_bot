@@ -2,23 +2,25 @@ from pymongo import MongoClient
 from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 import google.generativeai as genai
-from datetime import datetime, timezone
+import datetime
 import requests  # For making HTTP requests to the web search API
+import os  # For handling file paths
 
 # MongoDB Connection
-client = MongoClient("mongodb+srv://<username>:<password>@cluster0.m5zvr.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0") #replace the username and password
-db = client["telegram_bot"]
+client = MongoClient("mongodb+srv://<username>:<password>@cluster0.m5zvr.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0") #Replace id and password
+db = client["TelegramBotDB"]
 users = db["users"]
 chat_history = db["chat_history"]
-file_metadata = db["file_metadata"]  # New collection for file metadata
+file_metadata = db["file_metadata"]  # Collection for storing file metadata
 
 # Gemini API Key Configuration
-GEN_API_KEY = "xxxxxxxxxxx"  # Replace with your Gemini API key
+GEN_API_KEY = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxx"  # Replace with your Gemini API key
 genai.configure(api_key=GEN_API_KEY)
 
-# Web Search API Configuration
-WEB_SEARCH_API_KEY = "xxxxxxxxx"  # Replace with your web search API key
+# Web Search API Configuration (e.g., SerpAPI or Google Custom Search API)
+WEB_SEARCH_API_KEY = "xxxxxxxxxxxxxxxxxxxxxxxxxx"  # Replace with your web search API key
 WEB_SEARCH_API_URL = "https://serpapi.com/search"  # Example: SerpAPI endpoint
+
 
 # Start Command
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -32,6 +34,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = ReplyKeyboardMarkup(keyboard, one_time_keyboard=True, resize_keyboard=True)
         await update.message.reply_text("Welcome! Please share your phone number using the button below.",
                                         reply_markup=reply_markup)
+
 
 # Handle Contact Sharing
 async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -53,6 +56,7 @@ async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
     users.update_one({"chat_id": user.id}, {"$set": user_data}, upsert=True)
     await update.message.reply_text(f"✅ Thank you, {user.first_name}! Your phone number has been saved.")
 
+
 # Gemini Chat Function
 async def gemini_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_message = update.message.text
@@ -70,6 +74,26 @@ async def gemini_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             bot_reply = "⚠️ Sorry, I couldn't generate a response."
 
+        # Add emojis based on the response type
+        if "?" in bot_reply:
+            bot_reply += " 🤔"
+        elif "!" in bot_reply:
+            bot_reply += " 🎉"
+        else:
+            bot_reply += " 😊"
+
+        # Provide auto-follow-up suggestions based on the user's query
+        auto_follow_up = ""
+        if "weather" in user_message.lower():
+            auto_follow_up = "🌦️ Want to know the weather in your city? Just type 'weather' and your city name!"
+        elif "news" in user_message.lower():
+            auto_follow_up = "📰 Interested in the latest news? Try asking about world or tech news!"
+        elif "music" in user_message.lower():
+            auto_follow_up = "🎶 Looking for new music recommendations? Just ask for the latest hits!"
+
+        if auto_follow_up:
+            bot_reply += f"\n\n👉 {auto_follow_up}"
+
         # Store chat history in MongoDB
         chat_data = {
             "chat_id": chat_id,
@@ -77,16 +101,17 @@ async def gemini_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "first_name": user.first_name,
             "user_message": user_message,
             "bot_response": bot_reply,
-            "timestamp": datetime.now(timezone.utc)  # Timezone-aware datetime
+            "timestamp": datetime.datetime.now(datetime.UTC)
         }
         chat_history.insert_one(chat_data)
 
-        # Send AI Response
+        # Send AI Response with emojis and suggestions
         await update.message.reply_text(bot_reply)
 
     except Exception as e:
         await update.message.reply_text("⚠️ Sorry, an error occurred while processing your request.")
         print(f"Error: {e}")
+
 
 # Web Search Function
 async def web_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -135,47 +160,69 @@ async def web_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⚠️ Sorry, an error occurred while performing the web search.")
         print(f"Error: {e}")
 
-# Handle Image/File Analysis
+
+# Image/File Analysis Function
 async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.message.from_user
     chat_id = user.id
-    file = update.message.document or update.message.photo[-1]  # Get the document or the last photo
+
+    # Check if the message contains a document or photo
+    if update.message.document:
+        file = await update.message.document.get_file()
+        file_extension = os.path.splitext(update.message.document.file_name)[1].lower()
+    elif update.message.photo:
+        file = await update.message.photo[-1].get_file()  # Get the highest resolution photo
+        file_extension = ".jpg"
+    else:
+        await update.message.reply_text("⚠️ Unsupported file type. Please upload an image or document.")
+        return
 
     try:
         # Download the file
-        file_path = await file.get_file().download()
+        file_path = f"downloads/{file.file_id}{file_extension}"
+        await file.download_to_drive(file_path)
 
-        # Analyze the file content using Gemini
+        # Analyze the file using Gemini
         model = genai.GenerativeModel("gemini-pro")
-        analysis_response = model.generate_content(f"Describe the content of this file: {file.file_name}")
+        with open(file_path, "rb") as f:
+            file_content = f.read()
 
-        # Extract analysis response
-        if analysis_response.candidates and analysis_response.candidates[0].content.parts:
-            analysis_result = analysis_response.candidates[0].content.parts[0].text.strip()
+        response = model.generate_content(
+            f"Describe the content of this file: {file_content}"
+        )
+
+        if response.candidates and response.candidates[0].content.parts:
+            description = response.candidates[0].content.parts[0].text.strip()
         else:
-            analysis_result = "⚠️ Sorry, I couldn't analyze the file."
+            description = "⚠️ Sorry, I couldn't analyze the file."
 
         # Save file metadata in MongoDB
         file_data = {
             "chat_id": chat_id,
-            "file_name": file.file_name,
-            "file_size": file.file_size,
-            "file_type": file.mime_type,
-            "analysis": analysis_result,
-            "timestamp": datetime.now(timezone.utc)
+            "username": user.username,
+            "first_name": user.first_name,
+            "file_id": file.file_id,
+            "file_name": update.message.document.file_name if update.message.document else "photo.jpg",
+            "file_extension": file_extension,
+            "description": description,
+            "timestamp": datetime.datetime.now(datetime.UTC)
         }
         file_metadata.insert_one(file_data)
 
-        # Send analysis result
-        await update.message.reply_text(analysis_result)
+        # Send the analysis to the user
+        await update.message.reply_text(f"📄 File Analysis:\n{description}")
+
+        # Clean up the downloaded file
+        os.remove(file_path)
 
     except Exception as e:
-        await update.message.reply_text("⚠️ Sorry, an error occurred while processing your file.")
-        print(f"Error in handle_file: {e}")
+        await update.message.reply_text("⚠️ Sorry, an error occurred while analyzing the file.")
+        print(f"Error: {e}")
+
 
 # Main Function to Run the Bot
 if __name__ == "__main__":
-    bot_token = "xxxxxxxxxxxxxxxxxx"  # Replace with your Telegram Bot token
+    bot_token = "xxxxxxxxxxx"  # Replace with your Telegram Bot token
     app = ApplicationBuilder().token(bot_token).build()
 
     # Handlers
@@ -183,7 +230,11 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.CONTACT, handle_contact))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, gemini_chat))  # AI Chat
     app.add_handler(CommandHandler("websearch", web_search))  # Web Search
-    app.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, handle_file))  # Handle files and images
+    app.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO, handle_file))  # Image/File Analysis
+
+    # Create the downloads directory if it doesn't exist
+    if not os.path.exists("downloads"):
+        os.makedirs("downloads")
 
     # Start the bot
     print("🤖 Bot is running...")
